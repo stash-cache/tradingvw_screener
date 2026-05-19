@@ -66,10 +66,12 @@ htf       = input.timeframe("60", "Higher Timeframe", group=gMtf,
 htfEmaLen = input.int(50,        "HTF EMA Length", minval=5, group=gMtf)
 
 gViz = "Visualization"
-showEmas   = input.bool(true, "Show EMAs", group=gViz)
-showSignal = input.bool(true, "Show Signal Arrows", group=gViz)
-showTable  = input.bool(true, "Show Filter Status Table", group=gViz)
-showBg     = input.bool(true, "Highlight Signal Bars", group=gViz)
+showEmas    = input.bool(true, "Show EMAs", group=gViz)
+showSignal  = input.bool(true, "Show Signal Arrows", group=gViz)
+showCciMark = input.bool(true, "Show CCI Cross Marker", group=gViz,
+     tooltip="Plots a magenta diamond above the bar each time the CCI crosses above its signal line (purple over yellow).")
+showTable   = input.bool(true, "Show Filter Status Table", group=gViz)
+showBg      = input.bool(true, "Highlight Signal Bars", group=gViz)
 
 // ============================================================
 // Calculations
@@ -141,6 +143,12 @@ plot(showEmas and useTrend ? emaTrend : na, "Trend EMA",
 plotshape(showSignal and signal, "Bull Signal", style=shape.triangleup,
      location=location.belowbar, color=color.new(color.lime, 0),
      size=size.small, text="3/14")
+
+// CCI bullish cross marker (purple > yellow)
+plotshape(showCciMark and cciCrossUp and barstate.isconfirmed,
+     title="CCI Cross", style=shape.diamond, location=location.abovebar,
+     color=color.new(#d524f3, 0), size=size.tiny, text="CCI",
+     textcolor=color.new(#d524f3, 0))
 
 bgcolor(showBg and signal ? color.new(color.green, 80) : na, title="Signal BG")
 

@@ -25,14 +25,20 @@ adxSmooth = input.int(14,     "ADX Smoothing", minval=2, group=gAdx)
 adxMin    = input.float(20.0, "Min ADX", minval=0, step=0.5, group=gAdx,
      tooltip="20 = moderate trend, 25 = strong trend.")
 
-gRsi = "RSI Momentum"
-useRsi    = input.bool(true,  "Enable RSI Filter", group=gRsi)
-rsiLen    = input.int(14,     "RSI Length", minval=2, group=gRsi)
-rsiMin    = input.float(45.0, "RSI Floor",   minval=0, maxval=100, group=gRsi,
-     tooltip="Block weak-momentum crosses.")
-rsiMax    = input.float(75.0, "RSI Ceiling", minval=0, maxval=100, group=gRsi,
-     tooltip="Block overbought / exhaustion buys.")
-rsiRising = input.bool(true,  "Require RSI Rising", group=gRsi)
+gCci = "CCI Momentum"
+useCci      = input.bool(true,   "Enable CCI Filter", group=gCci)
+cciLen      = input.int(20,      "CCI Length", minval=2, group=gCci,
+     tooltip="Lookback for CCI(hlc3). 20 is the Lambert default.")
+cciSigLen   = input.int(9,       "CCI Signal Line Length", minval=1, group=gCci,
+     tooltip="SMA of CCI — the yellow line. Standard is 9.")
+cciFloor    = input.float(-250,  "CCI Floor", step=10, group=gCci,
+     tooltip="Block crosses where CCI is below this level (extreme capitulation continuation). -250 allows oversold-reversal entries.")
+cciCeiling  = input.float(200,   "CCI Ceiling", step=10, group=gCci,
+     tooltip="Block crosses where CCI is above this level (overbought exhaustion). 200 = blocks only extreme overbought.")
+cciRequireCross = input.bool(true, "Require CCI > Signal Line", group=gCci,
+     tooltip="Purple > Yellow. Confirms momentum has turned up.")
+cciRecentCross  = input.int(3,   "Recent Cross Lookback (bars)", minval=1, maxval=20, group=gCci,
+     tooltip="Accept the CCI bull-cross if it occurred within the last N bars (catches setups where CCI led the EMA cross by a few bars).")
 
 gVol = "Volume Surge"
 useVol  = input.bool(true,   "Enable Volume Filter", group=gVol)
@@ -74,7 +80,8 @@ emaTrend = ta.ema(close, trendLen)
 
 [diPlus, diMinus, adx] = ta.dmi(adxLen, adxSmooth)
 
-rsi     = ta.rsi(close, rsiLen)
+cci     = ta.cci(hlc3, cciLen)
+cciSig  = ta.sma(cci, cciSigLen)
 volSma  = ta.sma(volume, volLen)
 atrNow  = ta.atr(atrLen)
 atrBase = ta.sma(atrNow, atrAvgLen)
@@ -92,7 +99,11 @@ crossUp   = ta.crossover(emaFast, emaSlow)
 
 trendOk   = not useTrend or close > emaTrend
 adxOk     = not useAdx   or (adx > adxMin and diPlus > diMinus)
-rsiOk     = not useRsi   or (rsi > rsiMin and rsi < rsiMax and (not rsiRising or rsi > rsi[1]))
+cciInBand   = cci > cciFloor and cci < cciCeiling
+cciCrossUp  = ta.crossover(cci, cciSig)
+cciAbove    = cci > cciSig
+cciRecent   = ta.barssince(cciCrossUp) <= cciRecentCross
+cciOk     = not useCci or (cciInBand and (not cciRequireCross or (cciAbove and cciRecent)))
 
 // Volume feed may be absent on some indices/FX. Auto-skip when avg volume is 0.
 hasVol      = nz(volSma) > 0
@@ -111,11 +122,11 @@ mtfOk     = not useMtf or htfClose > htfEma
 // ============================================================
 // Final signal — confirmed bar only (no repaint)
 // ============================================================
-allFilters = trendOk and adxOk and rsiOk and volOk and atrOk and paOk and mtfOk
+allFilters = trendOk and adxOk and cciOk and volOk and atrOk and paOk and mtfOk
 signal     = crossUp and allFilters and barstate.isconfirmed
 
 // 0–7 momentum score for screener ranking (independent of the cross event).
-score = (trendOk ? 1 : 0) + (adxOk ? 1 : 0) + (rsiOk ? 1 : 0)
+score = (trendOk ? 1 : 0) + (adxOk ? 1 : 0) + (cciOk ? 1 : 0)
       + (volOk ? 1 : 0)   + (atrOk ? 1 : 0) + (paOk ? 1 : 0)
       + (mtfOk ? 1 : 0)
 
@@ -137,6 +148,8 @@ bgcolor(showBg and signal ? color.new(color.green, 80) : na, title="Signal BG")
 plot(signal ? 1 : 0, "Signal",         display=display.data_window + display.status_line)
 plot(score,          "MomentumScore",  display=display.data_window + display.status_line)
 plot(crossUp ? 1 : 0,"RawCross",       display=display.data_window)
+plot(cci,            "CCI",            display=display.data_window)
+plot(cciSig,         "CCI Signal",     display=display.data_window)
 
 // ============================================================
 // Alerts
@@ -164,7 +177,7 @@ if showTable and barstate.islast
          bgcolor=color.new(color.blue, 30))
     f_row(1, "Trend EMA",    trendOk)
     f_row(2, "ADX / DI",     adxOk)
-    f_row(3, "RSI Band",     rsiOk)
+    f_row(3, "CCI Momentum", cciOk)
     f_row(4, "Volume Surge", volOk)
     f_row(5, "ATR Expand",   atrOk)
     f_row(6, "Price Action", paOk)

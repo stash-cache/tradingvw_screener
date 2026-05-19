@@ -1,0 +1,173 @@
+//@version=6
+// 3/14 EMA Momentum Screener — robust crossover indicator with multi-factor
+// false-signal filtering. Overlay + screener-ready signal plot.
+indicator("3/14 EMA Momentum Screener", shorttitle="3-14 EMA Screener",
+     overlay=true, max_labels_count=200)
+
+// ============================================================
+// Inputs
+// ============================================================
+gCross = "Crossover"
+fastLen = input.int(3,  "Fast EMA Length", minval=1, group=gCross,
+     tooltip="Short EMA for momentum trigger (default 3).")
+slowLen = input.int(14, "Slow EMA Length", minval=2, group=gCross,
+     tooltip="Slow EMA — crossover anchor (default 14).")
+
+gTrend = "Trend Filter"
+useTrend = input.bool(true, "Enable Trend EMA Filter", group=gTrend)
+trendLen = input.int(50, "Trend EMA Length", minval=10, group=gTrend,
+     tooltip="Price must be above this EMA to allow longs. 50 intraday, 200 daily.")
+
+gAdx = "Directional ADX"
+useAdx    = input.bool(true,  "Enable ADX / DI Filter", group=gAdx)
+adxLen    = input.int(14,     "DI Length", minval=2, group=gAdx)
+adxSmooth = input.int(14,     "ADX Smoothing", minval=2, group=gAdx)
+adxMin    = input.float(20.0, "Min ADX", minval=0, step=0.5, group=gAdx,
+     tooltip="20 = moderate trend, 25 = strong trend.")
+
+gRsi = "RSI Momentum"
+useRsi    = input.bool(true,  "Enable RSI Filter", group=gRsi)
+rsiLen    = input.int(14,     "RSI Length", minval=2, group=gRsi)
+rsiMin    = input.float(45.0, "RSI Floor",   minval=0, maxval=100, group=gRsi,
+     tooltip="Block weak-momentum crosses.")
+rsiMax    = input.float(75.0, "RSI Ceiling", minval=0, maxval=100, group=gRsi,
+     tooltip="Block overbought / exhaustion buys.")
+rsiRising = input.bool(true,  "Require RSI Rising", group=gRsi)
+
+gVol = "Volume Surge"
+useVol  = input.bool(true,   "Enable Volume Filter", group=gVol)
+volLen  = input.int(20,      "Volume SMA Length", minval=2, group=gVol)
+volMult = input.float(1.3,   "Volume Multiplier", minval=0.1, step=0.1, group=gVol,
+     tooltip="Current volume must exceed avg × multiplier. Auto-skipped for symbols without a volume feed.")
+
+gAtr = "Volatility Expansion (ATR)"
+useAtr    = input.bool(true,  "Enable ATR Filter", group=gAtr)
+atrLen    = input.int(14,     "ATR Length", minval=2, group=gAtr)
+atrAvgLen = input.int(50,     "ATR Baseline Length", minval=5, group=gAtr)
+atrMult   = input.float(1.0,  "ATR Expansion Multiplier", minval=0.1, step=0.1, group=gAtr,
+     tooltip="Rejects flat / choppy regimes: ATR must exceed baseline × multiplier.")
+
+gPa = "Price-Action Confirmation"
+usePaCdl    = input.bool(true, "Require Bullish Candle (close > open)", group=gPa)
+usePaBody   = input.bool(true, "Require Body ≥ 50% of Range", group=gPa,
+     tooltip="Filters dojis and long-wick traps.")
+usePaStruct = input.bool(true, "Require Higher-Low Structure (2 bars)", group=gPa)
+
+gMtf = "Higher-Timeframe Confirmation"
+useMtf    = input.bool(true,     "Enable HTF Trend Confirmation", group=gMtf)
+htf       = input.timeframe("60", "Higher Timeframe", group=gMtf,
+     tooltip="Use 60 for intraday, D for swing, W for position.")
+htfEmaLen = input.int(50,        "HTF EMA Length", minval=5, group=gMtf)
+
+gViz = "Visualization"
+showEmas   = input.bool(true, "Show EMAs", group=gViz)
+showSignal = input.bool(true, "Show Signal Arrows", group=gViz)
+showTable  = input.bool(true, "Show Filter Status Table", group=gViz)
+showBg     = input.bool(true, "Highlight Signal Bars", group=gViz)
+
+// ============================================================
+// Calculations
+// ============================================================
+emaFast  = ta.ema(close, fastLen)
+emaSlow  = ta.ema(close, slowLen)
+emaTrend = ta.ema(close, trendLen)
+
+[diPlus, diMinus, adx] = ta.dmi(adxLen, adxSmooth)
+
+rsi     = ta.rsi(close, rsiLen)
+volSma  = ta.sma(volume, volLen)
+atrNow  = ta.atr(atrLen)
+atrBase = ta.sma(atrNow, atrAvgLen)
+
+// HTF EMA + close — non-repainting (lookahead_off + confirmed bar gate below).
+htfEma   = request.security(syminfo.tickerid, htf, ta.ema(close, htfEmaLen),
+     lookahead=barmerge.lookahead_off)
+htfClose = request.security(syminfo.tickerid, htf, close,
+     lookahead=barmerge.lookahead_off)
+
+// ============================================================
+// Filter conditions
+// ============================================================
+crossUp   = ta.crossover(emaFast, emaSlow)
+
+trendOk   = not useTrend or close > emaTrend
+adxOk     = not useAdx   or (adx > adxMin and diPlus > diMinus)
+rsiOk     = not useRsi   or (rsi > rsiMin and rsi < rsiMax and (not rsiRising or rsi > rsi[1]))
+
+// Volume feed may be absent on some indices/FX. Auto-skip when avg volume is 0.
+hasVol      = nz(volSma) > 0
+volOk       = not useVol or not hasVol or volume > volSma * volMult
+
+atrOk     = not useAtr or atrNow > atrBase * atrMult
+
+barRange  = high - low
+paCdlOk    = not usePaCdl   or close > open
+paBodyOk   = not usePaBody  or (barRange > 0 and math.abs(close - open) / barRange >= 0.5)
+paStructOk = not usePaStruct or (low > low[1] and low[1] > low[2])
+paOk       = paCdlOk and paBodyOk and paStructOk
+
+mtfOk     = not useMtf or htfClose > htfEma
+
+// ============================================================
+// Final signal — confirmed bar only (no repaint)
+// ============================================================
+allFilters = trendOk and adxOk and rsiOk and volOk and atrOk and paOk and mtfOk
+signal     = crossUp and allFilters and barstate.isconfirmed
+
+// 0–7 momentum score for screener ranking (independent of the cross event).
+score = (trendOk ? 1 : 0) + (adxOk ? 1 : 0) + (rsiOk ? 1 : 0)
+      + (volOk ? 1 : 0)   + (atrOk ? 1 : 0) + (paOk ? 1 : 0)
+      + (mtfOk ? 1 : 0)
+
+// ============================================================
+// Plots
+// ============================================================
+plot(showEmas ? emaFast : na, "EMA Fast",  color=color.new(color.aqua,   0), linewidth=2)
+plot(showEmas ? emaSlow : na, "EMA Slow",  color=color.new(color.orange, 0), linewidth=2)
+plot(showEmas and useTrend ? emaTrend : na, "Trend EMA",
+     color=color.new(color.gray, 0), linewidth=2)
+
+plotshape(showSignal and signal, "Bull Signal", style=shape.triangleup,
+     location=location.belowbar, color=color.new(color.lime, 0),
+     size=size.small, text="3/14")
+
+bgcolor(showBg and signal ? color.new(color.green, 80) : na, title="Signal BG")
+
+// Screener-facing outputs — pick these columns in Pine Screener.
+plot(signal ? 1 : 0, "Signal",         display=display.data_window + display.status_line)
+plot(score,          "MomentumScore",  display=display.data_window + display.status_line)
+plot(crossUp ? 1 : 0,"RawCross",       display=display.data_window)
+
+// ============================================================
+// Alerts
+// ============================================================
+alertcondition(signal,
+     title="3/14 EMA Bullish Momentum",
+     message='{{ticker}} ({{interval}}) 3/14 EMA BULL @ {{close}}')
+
+// ============================================================
+// Filter status table
+// ============================================================
+var table t = table.new(position.top_right, 2, 10,
+     frame_color=color.gray, frame_width=1, border_width=1)
+
+f_row(int r, string label, bool ok) =>
+    table.cell(t, 0, r, label, text_color=color.white,
+         bgcolor=color.new(color.black, 30))
+    table.cell(t, 1, r, ok ? "PASS" : "FAIL", text_color=color.white,
+         bgcolor=ok ? color.new(color.green, 30) : color.new(color.red, 30))
+
+if showTable and barstate.islast
+    table.cell(t, 0, 0, "Filter", text_color=color.white,
+         bgcolor=color.new(color.blue, 30))
+    table.cell(t, 1, 0, "Status", text_color=color.white,
+         bgcolor=color.new(color.blue, 30))
+    f_row(1, "Trend EMA",    trendOk)
+    f_row(2, "ADX / DI",     adxOk)
+    f_row(3, "RSI Band",     rsiOk)
+    f_row(4, "Volume Surge", volOk)
+    f_row(5, "ATR Expand",   atrOk)
+    f_row(6, "Price Action", paOk)
+    f_row(7, "HTF Trend",    mtfOk)
+    f_row(8, "Raw 3>14",     crossUp)
+    f_row(9, "FINAL",        signal)

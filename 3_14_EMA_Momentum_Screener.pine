@@ -30,7 +30,13 @@ useCci      = input.bool(true,   "Enable CCI Filter", group=gCci)
 cciLen      = input.int(20,      "CCI Length", minval=2, group=gCci,
      tooltip="Lookback for CCI(hlc3). 20 is the Lambert default.")
 cciSigLen   = input.int(9,       "CCI Signal Line Length", minval=1, group=gCci,
-     tooltip="SMA of CCI — the yellow line. Standard is 9.")
+     tooltip="Moving average of CCI — the yellow line. Standard is 9.")
+cciSigType  = input.string("EMA", "Signal Line Type", options=["SMA", "EMA"], group=gCci,
+     tooltip="EMA reacts faster — eliminates the 1–2 bar lag seen with SMA on sharp CCI reversals from oversold.")
+cciCrossGap = input.float(3.0,   "Cross Gap Threshold", minval=0, step=0.5, group=gCci,
+     tooltip="Minimum (CCI − Signal) on the cross bar to count as a clean cross. Rejects tangled / micro-crosses. 0 = any cross.")
+cciPriorBelow = input.int(2,     "Prior Bars Below Required", minval=0, maxval=20, group=gCci,
+     tooltip="CCI must have been below the signal line for at least this many consecutive bars before crossing up. Filters whipsaw crosses when the two lines are overlapping.")
 cciFloor    = input.float(-250,  "CCI Floor", step=10, group=gCci,
      tooltip="Block crosses where CCI is below this level (extreme capitulation continuation). -250 allows oversold-reversal entries.")
 cciCeiling  = input.float(200,   "CCI Ceiling", step=10, group=gCci,
@@ -83,7 +89,7 @@ emaTrend = ta.ema(close, trendLen)
 [diPlus, diMinus, adx] = ta.dmi(adxLen, adxSmooth)
 
 cci     = ta.cci(hlc3, cciLen)
-cciSig  = ta.sma(cci, cciSigLen)
+cciSig  = cciSigType == "EMA" ? ta.ema(cci, cciSigLen) : ta.sma(cci, cciSigLen)
 volSma  = ta.sma(volume, volLen)
 atrNow  = ta.atr(atrLen)
 atrBase = ta.sma(atrNow, atrAvgLen)
@@ -101,10 +107,15 @@ crossUp   = ta.crossover(emaFast, emaSlow)
 
 trendOk   = not useTrend or close > emaTrend
 adxOk     = not useAdx   or (adx > adxMin and diPlus > diMinus)
-cciInBand   = cci > cciFloor and cci < cciCeiling
-cciCrossUp  = ta.crossover(cci, cciSig)
-cciAbove    = cci > cciSig
-cciRecent   = ta.barssince(cciCrossUp) <= cciRecentCross
+cciInBand    = cci > cciFloor and cci < cciCeiling
+cciGap       = cci - cciSig
+cciRawCross  = ta.crossover(cci, cciSig)
+cciGapOk     = cciGap >= cciCrossGap
+cciWidening  = cciGap > nz(cciGap[1])
+cciPriorOk   = cciPriorBelow == 0 or nz(ta.barssince(cci > cciSig)[1], cciPriorBelow) >= cciPriorBelow
+cciCrossUp   = cciRawCross and cciGapOk and cciWidening and cciPriorOk
+cciAbove     = cci > cciSig + cciCrossGap
+cciRecent    = ta.barssince(cciCrossUp) <= cciRecentCross
 cciOk     = not useCci or (cciInBand and (not cciRequireCross or (cciAbove and cciRecent)))
 
 // Volume feed may be absent on some indices/FX. Auto-skip when avg volume is 0.
